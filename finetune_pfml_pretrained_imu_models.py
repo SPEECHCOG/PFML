@@ -382,7 +382,7 @@ if __name__ == "__main__":
                             data_masks = stack(data_masks, dim=0)
                             padding_masks = data_masks.bool()
                             
-                            # Pass our data through the encoder
+                            # Pass our data through the encoder and the time-series model
                             sensor_encoding = Encoder_model(X_input.float())
                             Y_pred, _, _, _ = Timeseries_model(sensor_encoding, src_key_padding_mask=padding_masks)
                             
