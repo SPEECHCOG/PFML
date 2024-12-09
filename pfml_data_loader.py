@@ -344,7 +344,7 @@ class pfml_raw_audio_dataset_librispeech(Dataset):
         mask_trainval_split = np.random.rand(len(flac_file_names)) <= train_val_ratio
         
         # train_val_test has three options: 'train', 'validation' and 'test'. We use 'test' when we want to extract
-        # features using a trained MFA model, i.e. we use all of our data with the option 'test'.
+        # features using a trained PFML model, i.e. we use all of our data with the option 'test'.
         if train_val_test == 'train':
             self.feats = feats[mask_trainval_split]
             self.feats_functionals = feats_functionals[mask_trainval_split]
