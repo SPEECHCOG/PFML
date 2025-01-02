@@ -1,6 +1,6 @@
 # A PyTorch implementation of the PFML algorithm for speech, EEG, and multi-sensor inertial measurement unit (IMU) data
 
-This repository contains code for pre-training models using the [Prediction of Functionals from Masked Latents (PFML) algorithm](https://arxiv.org/abs/2411.10087) for speech, EEG, and multi-sensor IMU data, and also code for fine-tuning the pre-trained models using labeled data. The code has been implemented using PyTorch. For a thorough description of the PFML algorithm, see (here a link).
+This repository contains code for pre-training models using the [Prediction of Functionals from Masked Latents (PFML) algorithm](https://arxiv.org/abs/2411.10087) for speech, EEG, and multi-sensor IMU data, and also code for fine-tuning the pre-trained models using labeled data. The code has been implemented using PyTorch. For a thorough description of the PFML algorithm, see [the publication](https://arxiv.org/abs/2411.10087).
 
 **The present PFML implementation has been used in the following publication:**
 [E. Vaaras, M. Airaksinen, and O. Räsänen, "PFML: Self-Supervised Learning of Time-Series Data Without Representation Collapse" _(arXiv preprint)_](https://arxiv.org/abs/2411.10087).
