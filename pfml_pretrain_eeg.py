@@ -113,7 +113,6 @@ if __name__ == '__main__':
                 f.write(f'Loading model {conf.encoder_best_model_name}\n')
                 f.write(f'Loading model {conf.transformer_best_model_name}\n')
                 f.write(f'Loading model {conf.decoder_best_model_name}\n')
-                f.write(f'Initializing teacher model updater from file {conf.teacher_updater_state_dict_savename}\n')
             Encoder.load_state_dict(load(conf.encoder_best_model_name, map_location=device))
             Transformer.load_state_dict(load(conf.transformer_best_model_name, map_location=device))
             Decoder.load_state_dict(load(conf.decoder_best_model_name, map_location=device))
