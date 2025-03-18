@@ -387,9 +387,8 @@ if __name__ == "__main__":
                             Y_pred, _, _, _ = Timeseries_model(sensor_encoding, src_key_padding_mask=padding_masks)
                             
                             # We only take the unmasked frames into account
-                            masked_frames = data_masks.bool()
-                            Y_pred_unmasked = Y_pred[~masked_frames, :]
-                            Y_unmasked = Y_orig[~masked_frames, :].max(dim=1)[1]
+                            Y_pred_unmasked = Y_pred[~padding_masks, :]
+                            Y_unmasked = Y_orig[~padding_masks, :].max(dim=1)[1]
                             
                             # Compute the weighted loss
                             loss = loss_function(input=Y_pred_unmasked, target=Y_unmasked)
@@ -438,9 +437,8 @@ if __name__ == "__main__":
                                 padding_masks = data_masks.bool()
                                 sensor_encoding = Encoder_model(X_input.float())
                                 Y_pred, _, _, _ = Timeseries_model(sensor_encoding, src_key_padding_mask=padding_masks)
-                                masked_frames = data_masks.bool()
-                                Y_pred_unmasked = Y_pred[~masked_frames, :]
-                                Y_unmasked = Y_orig[~masked_frames, :].max(dim=1)[1]
+                                Y_pred_unmasked = Y_pred[~padding_masks, :]
+                                Y_unmasked = Y_orig[~padding_masks, :].max(dim=1)[1]
                                 loss = loss_function(input=Y_pred_unmasked, target=Y_unmasked)
                                 smax = Softmax(dim=1)
                                 Y_pred_unmasked_smax_np = smax(Y_pred_unmasked).detach().cpu().numpy()
@@ -579,9 +577,8 @@ if __name__ == "__main__":
                         padding_masks = data_masks.bool()
                         sensor_encoding = Encoder_model(X_input.float())
                         Y_pred, _, _, _ = Timeseries_model(sensor_encoding, src_key_padding_mask=padding_masks)
-                        masked_frames = data_masks.bool()
-                        Y_pred_unmasked = Y_pred[~masked_frames, :]
-                        Y_unmasked = Y_orig[~masked_frames, :].max(dim=1)[1]
+                        Y_pred_unmasked = Y_pred[~padding_masks, :]
+                        Y_unmasked = Y_orig[~padding_masks, :].max(dim=1)[1]
                         loss = loss_function(input=Y_pred_unmasked, target=Y_unmasked)
                         smax = Softmax(dim=1)
                         Y_pred_unmasked_smax_np = smax(Y_pred_unmasked).detach().cpu().numpy()
