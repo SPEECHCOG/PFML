@@ -1,27 +1,27 @@
 # A PyTorch implementation of the PFML algorithm for speech, EEG, and multi-sensor inertial measurement unit (IMU) data
 
-This repository contains code for pre-training models using the [Prediction of Functionals from Masked Latents (PFML) algorithm](https://arxiv.org/abs/2411.10087) for speech, EEG, and multi-sensor IMU data, and also code for fine-tuning the pre-trained models using labeled data. The code has been implemented using PyTorch. For a thorough description of the PFML algorithm, see [the publication](https://arxiv.org/abs/2411.10087).
+This repository contains code for pre-training models using the [Prediction of Functionals from Masked Latents (PFML) algorithm](https://ieeexplore.ieee.org/document/10947019) for speech, EEG, and multi-sensor IMU data, and also code for fine-tuning the pre-trained models using labeled data. The code has been implemented using PyTorch. For a thorough description of the PFML algorithm, see [the publication](https://ieeexplore.ieee.org/document/10947019).
 
 **The present PFML implementation has been used in the following publication:**
-[E. Vaaras, M. Airaksinen, and O. Räsänen, "PFML: Self-Supervised Learning of Time-Series Data Without Representation Collapse" _(arXiv preprint)_](https://arxiv.org/abs/2411.10087).
+[E. Vaaras, M. Airaksinen, and O. Räsänen, "PFML: Self-Supervised Learning of Time-Series Data Without Representation Collapse", _IEEE Access_, vol. 13, pp. 60233-60244, 2025](https://ieeexplore.ieee.org/document/10947019).
 
-If you use the present code or its derivatives, please cite the [repository URL](https://github.com/SPEECHCOG/PFML) and/or the [aforementioned publication](https://arxiv.org/abs/2411.10087).
+If you use the present code or its derivatives, please cite the [repository URL](https://github.com/SPEECHCOG/PFML) and/or the [aforementioned publication](https://ieeexplore.ieee.org/document/10947019).
 
 ## Requirements
 Any `PyTorch` version newer than version 1.9.0 should work fine. You can find out how to install PyTorch here: https://pytorch.org/get-started/locally/. You also need to have `NumPy`, `scikit-learn`, `Librosa`, and `SciPy` installed.
 
 ## Repository contents
-- `conf_finetune_pfml_pretrained_eeg_models.py`: Example configuration file for fine-tuning pre-trained models for EEG data, using the same configuration settings that were used in the [present paper](https://arxiv.org/abs/2411.10087).
-- `conf_finetune_pfml_pretrained_imu_models.py`: Example configuration file for fine-tuning pre-trained models for multi-sensor IMU data, using the same configuration settings that were used in the [present paper](https://arxiv.org/abs/2411.10087).
-- `conf_finetune_pfml_pretrained_speech_models.py`: Example configuration file for fine-tuning pre-trained models for speech data, using the same configuration settings that were used in the [present paper](https://arxiv.org/abs/2411.10087).
-- `conf_pfml_pretrain_eeg.py`: Example configuration file for PFML pre-training for EEG data, using the same configuration settings that were used in the [present paper](https://arxiv.org/abs/2411.10087).
-- `conf_pfml_pretrain_imu.py`: Example configuration file for PFML pre-training for multi-sensor IMU data, using the same configuration settings that were used in the [present paper](https://arxiv.org/abs/2411.10087).
-- `conf_pfml_pretrain_speech.py`: Example configuration file for PFML pre-training for speech data, using the same configuration settings that were used in the [present paper](https://arxiv.org/abs/2411.10087).
+- `conf_finetune_pfml_pretrained_eeg_models.py`: Example configuration file for fine-tuning pre-trained models for EEG data, using the same configuration settings that were used in the [present paper](https://ieeexplore.ieee.org/document/10947019).
+- `conf_finetune_pfml_pretrained_imu_models.py`: Example configuration file for fine-tuning pre-trained models for multi-sensor IMU data, using the same configuration settings that were used in the [present paper](https://ieeexplore.ieee.org/document/10947019).
+- `conf_finetune_pfml_pretrained_speech_models.py`: Example configuration file for fine-tuning pre-trained models for speech data, using the same configuration settings that were used in the [present paper](https://ieeexplore.ieee.org/document/10947019).
+- `conf_pfml_pretrain_eeg.py`: Example configuration file for PFML pre-training for EEG data, using the same configuration settings that were used in the [present paper](https://ieeexplore.ieee.org/document/10947019).
+- `conf_pfml_pretrain_imu.py`: Example configuration file for PFML pre-training for multi-sensor IMU data, using the same configuration settings that were used in the [present paper](https://ieeexplore.ieee.org/document/10947019).
+- `conf_pfml_pretrain_speech.py`: Example configuration file for PFML pre-training for speech data, using the same configuration settings that were used in the [present paper](https://ieeexplore.ieee.org/document/10947019).
 - `finetune_pfml_pretrained_eeg_models.py`: A script for fine-tuning a pre-trained model using labeled EEG data.
 - `finetune_pfml_pretrained_imu_models.py`: A script for fine-tuning a pre-trained model using labeled multi-sensor IMU data.
 - `finetune_pfml_pretrained_speech_models.py`: A script for fine-tuning a pre-trained model using labeled speech data.
 - `pfml_data_loader.py`: A file containing data loaders for PFML pre-training and fine-tuning for all three different data modalities (speech, multi-sensor IMU, and EEG data).
-- `pfml_model.py`: A file containing the neural network model implementations of the [present paper](https://arxiv.org/abs/2411.10087), including data modality-specific encoders for framed speech, multi-sensor IMU, and EEG data.
+- `pfml_model.py`: A file containing the neural network model implementations of the [present paper](https://ieeexplore.ieee.org/document/10947019), including data modality-specific encoders for framed speech, multi-sensor IMU, and EEG data.
 - `pfml_pretrain_eeg.py`: A script for running PFML pre-training and/or using a pre-trained model to extract features for EEG data.
 - `pfml_pretrain_imu.py`: A script for running PFML pre-training and/or using a pre-trained model to extract features for multi-sensor IMU data.
 - `pfml_pretrain_speech.py`: A script for running PFML pre-training and/or using a pre-trained model to extract features for speech data.
