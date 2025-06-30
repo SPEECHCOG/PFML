@@ -6,6 +6,9 @@ Speech and Cognition Research Group, https://webpages.tuni.fi/specog/index.html
 The different models used for PFML pre-training and fine-tuning. The file contains
 data modality-specific encoders for framed speech, multi-sensor IMU, and EEG data.
 
+NOTE: For detailed descriptions regarding the input variables for the models, see
+the configuration files.
+
 """
 
 import numpy as np
