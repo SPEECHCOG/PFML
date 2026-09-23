@@ -268,15 +268,27 @@ decoder_params = {'input_dim': 128,
 params_train_dataset = {'max_length_seconds': 3.0,
                         'window_len_seconds': window_len_seconds,
                         'hop_len_seconds': hop_len_seconds,
-                        'target_fs': target_fs}
+                        'target_fs': target_fs,
+                        'preprocess_data': False,
+                        'preprocessed_data_dir': './preprocessed_librispeech_framed',
+                        'precompute_functionals': False,
+                        'functionals_save_dir': './precomputed_librispeech_functionals'}
 params_validation_dataset = {'max_length_seconds': 3.0,
                              'window_len_seconds': window_len_seconds,
                              'hop_len_seconds': hop_len_seconds,
-                             'target_fs': target_fs}
+                             'target_fs': target_fs,
+                             'preprocess_data': False,
+                             'preprocessed_data_dir': './preprocessed_librispeech_framed',
+                             'precompute_functionals': False,
+                             'functionals_save_dir': './precomputed_librispeech_functionals'}
 params_feature_extraction_dataset = {'max_length_seconds': 3.0,
                                      'window_len_seconds': window_len_seconds,
                                      'hop_len_seconds': hop_len_seconds,
-                                     'target_fs': target_fs}
+                                     'target_fs': target_fs,
+                                     'preprocess_data': False,
+                                     'preprocessed_data_dir': './preprocessed_librispeech_framed',
+                                     'precompute_functionals': False,
+                                     'functionals_save_dir': './precomputed_librispeech_functionals'}
 
 # The hyperparameters for training and validation (arguments for torch.utils.data.DataLoader object)
 params_train = {'batch_size': batch_size,

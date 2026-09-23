@@ -27,7 +27,7 @@ class pfml_raw_audio_dataset_librispeech(Dataset):
     Dataloader for PFML pre-training using the Librispeech (https://www.openslr.org/12) dataset.
     
     """
-    
+
     def __init__(self, train_val_test='train', max_length_seconds=3.0, train_val_ratio=0.8, random_seed=22,
                  file_dir='./LibriSpeech', normalize_waveform=True, window_len_seconds=0.03, hop_len_seconds=0.01,
                  target_fs=16000, apply_smooth_windowing=False, normalize_functionals_sample_level=False,
@@ -35,14 +35,21 @@ class pfml_raw_audio_dataset_librispeech(Dataset):
                  functionals_include_var=True, functionals_include_skew=True, functionals_include_kurtosis=True,
                  functionals_include_min=True, functionals_include_max=True, functionals_include_zcr=True,
                  functionals_include_acf_mean=True, functionals_include_acf_var=True,
-                 functionals_include_acf_skew=True, functionals_include_acf_kurtosis=True):
+                 functionals_include_acf_skew=True, functionals_include_acf_kurtosis=True,
+                 preprocess_data=False, preprocessed_data_dir='./preprocessed_librispeech_files_framed',
+                 precompute_functionals=False, functionals_save_dir='./precomputed_librispeech_functionals'):
         super().__init__()
+        
+        # Since the utterances contain different numbers of frames, we concatenate the frames of all utterances into
+        # one memory-mapped array: frame_offsets stores where each utterance begins and ends in this array.
+        frames_path = os.path.join(preprocessed_data_dir, 'frames_librispeech.npy')
+        frame_offsets_path = os.path.join(preprocessed_data_dir, 'frame_offsets_librispeech.npy')
+        functionals_path = os.path.join(functionals_save_dir, 'functionals_librispeech.npy')
         
         # Find out our FLAC files in the given directory
         try:
             # This is used to spot nonexisting directories since os.walk() is silent about them
-            error_variable = os.listdir(file_dir)
-            del error_variable
+            os.listdir(file_dir)
             
             filenames_flac = []
             for dir_path, dir_names, file_names in os.walk(file_dir):
@@ -60,104 +67,152 @@ class pfml_raw_audio_dataset_librispeech(Dataset):
         flac_file_names = np.array(flac_file_names)
         del filenames_flac
         
-        # We go through each WAV file and we frame the signals
-        feats = []
-        for file in flac_file_names:
-            x, fs = librosa.core.load(file, sr=target_fs)
-            
-            # Normalize to zero mean, unit variance
-            if normalize_waveform:
-                x = (x - x.mean()) / x.std()
-            
-            # We frame our signal
-            frame_len = int(window_len_seconds * fs)
-            shift = int(hop_len_seconds * fs)
-            
-            # x_framed is of size [num_frames, frame_len]
-            x_framed = librosa.util.frame(x, frame_length=frame_len, hop_length=shift, axis=0)
-            
-            if apply_smooth_windowing:
-                # We apply a Hann window for our frames
-                window = scipy.signal.hann(frame_len, sym=False)
-                x_framed_windowed = np.zeros_like(x_framed)
-                for i in range(x_framed.shape[0]):
-                    x_framed_windowed[i,:] = x_framed[i,:] * window
-                x_framed = x_framed_windowed
-            
-            feats.append(x_framed)
+        # The frame and hop lengths (in samples)
+        frame_len = int(window_len_seconds * target_fs)
+        shift = int(hop_len_seconds * target_fs)
         
-        # We convert the list of variable-length features into a Numpy object
-        feats = np.array(feats, dtype=object)
+        # Preprocess and save the framed signals
+        if not os.path.exists(preprocessed_data_dir):
+            os.makedirs(preprocessed_data_dir)
+            preprocess_data = True
+        else:
+            if not os.path.exists(frames_path) or not os.path.exists(frame_offsets_path):
+                preprocess_data = True
+            if preprocess_data and len(os.listdir(preprocessed_data_dir)) != 0:
+                # Remove old files from the given directory
+                filenames_old_files = os.listdir(preprocessed_data_dir)
+                for filename in filenames_old_files:
+                    os.remove(os.path.join(preprocessed_data_dir, filename))
+        
+        if preprocess_data or len(os.listdir(preprocessed_data_dir)) == 0:
+            
+            # We first determine the total number of frames without loading all signals into memory
+            frame_offsets = np.zeros(len(flac_file_names) + 1, dtype=np.int64)
+            for i, filename in enumerate(flac_file_names):
+                x, _ = librosa.core.load(filename, sr=target_fs)
+                frame_offsets[i + 1] = frame_offsets[i] + int(np.floor(((len(x) - frame_len) / shift) + 1))
+            
+            # Pre-allocate one array containing the frames of all samples
+            feats = np.lib.format.open_memmap(frames_path, mode='w+', dtype=np.float32, shape=(frame_offsets[-1], frame_len))
+            np.save(frame_offsets_path, frame_offsets)
+            
+            # We go through each audio file and write its framed signal into the pre-allocated array
+            for i, filename in enumerate(flac_file_names):
+                
+                x, _ = librosa.core.load(filename, sr=target_fs)
+                
+                # Normalize to zero mean, unit variance
+                if normalize_waveform:
+                    x = (x - x.mean()) / x.std()
+                
+                # We frame the signal. x_framed is of size [num_frames, frame_len]
+                x_framed = librosa.util.frame(x, frame_length=frame_len, hop_length=shift, axis=0)
+                
+                if apply_smooth_windowing:
+                    # We apply a Hann window for our frames
+                    window = scipy.signal.hann(frame_len, sym=False)
+                    x_framed_windowed = np.zeros_like(x_framed)
+                    for j in range(x_framed.shape[0]):
+                        x_framed_windowed[j,:] = x_framed[j,:] * window
+                    x_framed = x_framed_windowed
+                
+                feats[frame_offsets[i]:frame_offsets[i + 1]] = x_framed
+            
+            # A memory-mapped array writes data into a file, but we ask the OS to write any pending changes to the
+            # file just in case (the OS may temporarily keep some changes in RAM before writing them to disk).
+            feats.flush()
+            
+            del feats
+        
+        
+        # Load the framed signals (memory-mapped array --> not loading the complete array into RAM) and their offsets
+        self.feats = np.load(frames_path, mmap_mode='r')
+        self.frame_offsets = np.load(frame_offsets_path)
         
         # We define the longest sample length (in frames)
         x_zeros = np.zeros(int(max_length_seconds*target_fs))
         self.x_zeros_framed = librosa.util.frame(x_zeros, frame_length=frame_len, hop_length=shift, axis=0)
         self.longest_sample_length = len(self.x_zeros_framed)
         
-        # We compute functionals of the features
-        feats_functionals = []
-        for feat in feats:
-            functionals = []
-            if functionals_include_mean:
-                functionals.append(np.mean(feat, axis=1))
-            if functionals_include_var:
-                functionals.append(np.var(feat, axis=1))
-            if functionals_include_skew:
-                functionals.append(scipy.stats.skew(feat, axis=1))
-            if functionals_include_kurtosis:
-                functionals.append(scipy.stats.kurtosis(feat, axis=1))
-            if functionals_include_min:
-                functionals.append(feat.min(axis=1))
-            if functionals_include_max:
-                functionals.append(feat.max(axis=1))
-            if functionals_include_zcr:
-                functionals.append(librosa.zero_crossings(feat, axis=1).sum(axis=1) / frame_len)
-            if functionals_include_acf_mean or functionals_include_acf_var or functionals_include_acf_skew or functionals_include_acf_kurtosis:
-                ac = estimated_autocorrelation(feat)
-                if functionals_include_acf_mean:
-                    functionals.append(np.mean(ac, axis=1))
-                if functionals_include_acf_var:
-                    functionals.append(np.var(ac, axis=1))
-                if functionals_include_acf_skew:
-                    functionals.append(scipy.stats.skew(ac, axis=1))
-                if functionals_include_acf_kurtosis:
-                    functionals.append(scipy.stats.kurtosis(ac, axis=1))
-            functionals = np.stack(functionals, axis=1)
-            if normalize_functionals_sample_level:
-                feats_functionals.append(normalize_sample(functionals))
-            else:
-                feats_functionals.append(functionals)
+        # We compute and save functionals of the features
+        if not os.path.exists(functionals_save_dir):
+            os.makedirs(functionals_save_dir)
+            precompute_functionals = True
+        else:
+            if not os.path.exists(functionals_path):
+                precompute_functionals = True
+            if precompute_functionals and len(os.listdir(functionals_save_dir)) != 0:
+                # Remove old files from the given directory
+                filenames_old_files = os.listdir(functionals_save_dir)
+                for filename in filenames_old_files:
+                    os.remove(os.path.join(functionals_save_dir, filename))
         
-        if normalize_functionals_corpus_level:
-            feats_functionals = normalize_dataset(feats_functionals)
+        if precompute_functionals or len(os.listdir(functionals_save_dir)) == 0:
+            feats_functionals = None
+            for i in range(len(flac_file_names)):
+                feat = self.feats[self.frame_offsets[i]:self.frame_offsets[i + 1]]
+                functionals = []
+                if functionals_include_mean:
+                    functionals.append(np.mean(feat, axis=1))
+                if functionals_include_var:
+                    functionals.append(np.var(feat, axis=1))
+                if functionals_include_skew:
+                    functionals.append(scipy.stats.skew(feat, axis=1))
+                if functionals_include_kurtosis:
+                    functionals.append(scipy.stats.kurtosis(feat, axis=1))
+                if functionals_include_min:
+                    functionals.append(feat.min(axis=1))
+                if functionals_include_max:
+                    functionals.append(feat.max(axis=1))
+                if functionals_include_zcr:
+                    functionals.append(librosa.zero_crossings(feat, axis=1).sum(axis=1) / frame_len)
+                if functionals_include_acf_mean or functionals_include_acf_var or functionals_include_acf_skew or functionals_include_acf_kurtosis:
+                    ac = estimated_autocorrelation(feat)
+                    if functionals_include_acf_mean:
+                        functionals.append(np.mean(ac, axis=1))
+                    if functionals_include_acf_var:
+                        functionals.append(np.var(ac, axis=1))
+                    if functionals_include_acf_skew:
+                        functionals.append(scipy.stats.skew(ac, axis=1))
+                    if functionals_include_acf_kurtosis:
+                        functionals.append(scipy.stats.kurtosis(ac, axis=1))
+                functionals = np.stack(functionals, axis=1)
+                if normalize_functionals_sample_level:
+                    functionals = normalize_sample(functionals)
+                if feats_functionals is None:
+                    feats_functionals = np.lib.format.open_memmap(functionals_path, mode='w+', dtype=functionals.dtype, shape=(len(self.feats), functionals.shape[1]))
+                feats_functionals[self.frame_offsets[i]:self.frame_offsets[i + 1]] = functionals
+            
+            if normalize_functionals_corpus_level:
+                feats_functionals = normalize_dataset(feats_functionals, self.frame_offsets)
+            feats_functionals.flush()
+            del feats_functionals
         
-        feats_functionals = np.array(feats_functionals, dtype=object)
-                
+        self.feats_functionals = np.load(functionals_path, mmap_mode='r')
+        
         # Split our data into a train, validation, and test set
         np.random.seed(random_seed)
         mask_trainval_split = np.random.rand(len(flac_file_names)) <= train_val_ratio
         
         # train_val_test has three options: 'train', 'validation' and 'test'. We use 'test' when we want to extract
-        # features using a trained PFML model, i.e. we use all of our data with the option 'test'.
+        # features using a PFML pre-trained model, i.e. we use all of our data with the option 'test'.
         if train_val_test == 'train':
-            self.feats = feats[mask_trainval_split]
-            self.feats_functionals = feats_functionals[mask_trainval_split]
+            self.indices = np.arange(len(flac_file_names))[mask_trainval_split]
         elif train_val_test == 'validation':
-            self.feats = feats[~mask_trainval_split]
-            self.feats_functionals = feats_functionals[~mask_trainval_split]
+            self.indices = np.arange(len(flac_file_names))[~mask_trainval_split]
         else:
-            self.feats = feats
-            self.feats_functionals = feats_functionals
+            self.indices = np.arange(len(flac_file_names))
         
         self.train_val_test = train_val_test
-        
+
     def __len__(self) -> int:
-        return len(self.feats)
+        return len(self.indices)
 
     def __getitem__(self, index):
         
-        framed_signal_orig = self.feats[index]
-        functionals = self.feats_functionals[index]
+        data_index = self.indices[index]
+        framed_signal_orig = np.array(self.feats[self.frame_offsets[data_index]:self.frame_offsets[data_index + 1]], copy=True)
+        functionals = np.array(self.feats_functionals[self.frame_offsets[data_index]:self.frame_offsets[data_index + 1]], copy=True)
         
         # If our sample is shorter than the longest acceptable sample, we add a zero-padded part to the end
         if len(framed_signal_orig) < self.longest_sample_length:
@@ -166,7 +221,7 @@ class pfml_raw_audio_dataset_librispeech(Dataset):
             num_zero_padded_frames = num_missing_frames
             functionals_zeropad = np.zeros((len(framed_signal), functionals.shape[1]))
             functionals = np.concatenate((functionals, functionals_zeropad[:num_zero_padded_frames, :]))
-            
+        
         # If our sample is longer than the longest acceptable sample, we take a random segment of the same
         # length as the longest acceptable sample length
         elif len(framed_signal_orig) > self.longest_sample_length:
@@ -179,7 +234,7 @@ class pfml_raw_audio_dataset_librispeech(Dataset):
         else:
             framed_signal = framed_signal_orig
             num_zero_padded_frames = 0
-            
+        
         # The indices of zero padded frames are tagged with True, whereas non-padded frames are tagged with False
         zero_padding_mask = np.full(len(framed_signal), False)
         if num_zero_padded_frames != 0:
@@ -188,11 +243,6 @@ class pfml_raw_audio_dataset_librispeech(Dataset):
         return framed_signal, zero_padding_mask, functionals
 
 
-
-
-
-
-    
 
 class random_imu_data_dataset(Dataset):
     """
@@ -330,10 +380,12 @@ class random_imu_data_dataset(Dataset):
             else:
                 feats_functionals.append(functionals)
         
+        feats_functionals = np.array(feats_functionals)
+        
         if normalize_functionals_dataset_level:
             feats_functionals = normalize_dataset(feats_functionals)
         
-        self.feats_functionals = np.array(feats_functionals)
+        self.feats_functionals = feats_functionals
         
         # We create artificial labels for our randomly generated dataset. There are nine different labels
         # for movement in MAIJU data.
@@ -400,17 +452,27 @@ class sleep_edf_expanded_dataset_pfml(Dataset):
                  functionals_include_acf_skew=True, functionals_include_acf_kurtosis=True, data_sampling_rate=1.0):
         super().__init__()
         
+        frames_path = os.path.join(preprocessed_data_dir, 'frames.npy')
+        labels_path = os.path.join(preprocessed_data_dir, 'labels.npy')
+        subject_ids_path = os.path.join(preprocessed_data_dir, 'subject_ids.npy')
+        functionals_path = os.path.join(functionals_save_dir, 'functionals.npy')
+        
+        frame_len = int(window_len_seconds * fs)
+        shift = int(hop_len_seconds * fs)
+        
         # Preprocess the data
         if not os.path.exists(preprocessed_data_dir):
             os.makedirs(preprocessed_data_dir)
             preprocess_data = True
         else:
+            if not all(os.path.exists(path) for path in [frames_path, labels_path, subject_ids_path]):
+                preprocess_data = True
             if preprocess_data and len(os.listdir(preprocessed_data_dir)) != 0:
                 # Remove old files from the given directory
                 filenames_old_files = os.listdir(preprocessed_data_dir)
                 for filename in filenames_old_files:
                     os.remove(os.path.join(preprocessed_data_dir, filename))
-            
+        
         if preprocess_data or len(os.listdir(preprocessed_data_dir)) == 0:
             # Find out our EDF files in the given directory
             try:
@@ -420,12 +482,50 @@ class sleep_edf_expanded_dataset_pfml(Dataset):
             
             # Remove other files that EDF files
             edf_file_names = [filename for filename in filenames_edf if filename.endswith('.npz')]
+            edf_file_names = sorted(edf_file_names)
             del filenames_edf
             
-            # Go through each MAT file and preprocess the data
+            # We first determine the total number of sequences and the framed data shape
+            num_sequences = 0
+            num_frames = None
+            num_channels = None
+            
             for filename in edf_file_names:
-                X = np.load(os.path.join(data_dir, filename))['x'].squeeze()
-                Y = np.load(os.path.join(data_dir, filename))['y']
+                with np.load(os.path.join(data_dir, filename)) as loaded_data:
+                    num_sequences += len(loaded_data['y'])
+            
+                    if num_frames is None:
+                        X_example = loaded_data['x'].squeeze()
+            
+                        # If the file contains only one sequence, squeeze() removes the
+                        # sequence dimension, so we add it back.
+                        if X_example.ndim == 1:
+                            X_example = np.expand_dims(X_example, axis=0)
+            
+                        if X_example.ndim < 3:
+                            sequence_length = X_example.shape[1]
+                            num_channels = 1
+                        else:
+                            sequence_length = X_example.shape[2]
+                            num_channels = X_example.shape[1]
+            
+                        num_frames = int(np.floor(((sequence_length - frame_len) / shift) + 1))
+                
+            # Pre-allocate the framed sequences, labels and subject IDs
+            frames = np.lib.format.open_memmap(frames_path, mode='w+', dtype=np.float32, shape=(num_sequences, num_frames, num_channels, frame_len))
+            labels = np.lib.format.open_memmap(labels_path, mode='w+', dtype=np.float64, shape=(num_sequences,))
+            subject_ids = np.lib.format.open_memmap(subject_ids_path, mode='w+', dtype='<U2', shape=(num_sequences,))
+            
+            # Go through each EDF file, preprocess the data, and write it into the arrays
+            data_index = 0
+            for filename in edf_file_names:
+                with np.load(os.path.join(data_dir, filename)) as loaded_data:
+                    X = loaded_data['x'].squeeze()
+                    Y = loaded_data['y']
+                
+                # If the file contains only one sequence, squeeze() removes the sequence dimension, so we add it back.
+                if X.ndim == 1:
+                    X = np.expand_dims(X, axis=0)
                 
                 # X is now of shape [num_sequences, sequence_length]. We z-score normalize each sequence
                 # to have zero mean and unit variance.
@@ -433,55 +533,57 @@ class sleep_edf_expanded_dataset_pfml(Dataset):
                     X[i,:] = (X[i,:] - X[i,:].mean()) / X[i,:].std()
                 
                 # We frame each sequence
-                frame_len = int(window_len_seconds * fs)
-                shift = int(hop_len_seconds * fs)
-                
-                data_framed = frame_sig_eeg(X, frame_len, shift)
+                data_framed = frame_sig(X, frame_len, shift, sequence_batch=True)
                 del X
                 
-                # Save the sequences in .npy format.
+                # Save the sequences
                 for i in range(len(data_framed)):
-                    savedata = data_framed[i,:,:,:]
-                    label = Y[i]
-                    savename = os.path.join(preprocessed_data_dir, f'{filename.split(".")[0]}_framed_{i}_{label}.npy')
-                    np.save(savename, savedata)
-        
-        # List all of our preprocessed files
-        preprocessed_files = [filename for filename in os.listdir(preprocessed_data_dir) if filename.endswith('.npy')]
-        preprocessed_files = np.array(sorted(preprocessed_files))
+                    frames[data_index] = data_framed[i,:,:,:]
+                    labels[data_index] = Y[i]
+                    subject_ids[data_index] = filename[3:5]
+                    data_index += 1
+            
+            frames.flush()
+            labels.flush()
+            subject_ids.flush()
+            del frames
+            del labels
+            del subject_ids
+            
+        # Load our preprocessed data using memory mapping
+        self.preprocessed_data = np.load(frames_path, mmap_mode='r')
         
         # Split our data into separate sets
         np.random.seed(random_seed)
-        mask_trainval_split = np.random.rand(len(preprocessed_files)) <= train_val_ratio
+        mask_trainval_split = np.random.rand(len(self.preprocessed_data)) <= train_val_ratio
         
         # train_val_test has three options: 'train', 'validation' and 'test'. We use 'test' when we want to extract
-        # features using a trained data2vec model, i.e. we use all of our data with the option 'test'.
+        # features using a PFML pre-trained model, i.e. we use all of our data with the option 'test'.
         if train_val_test == 'train':
-            self.feat_files = preprocessed_files[mask_trainval_split]
+            self.feat_indices = np.arange(len(self.preprocessed_data))[mask_trainval_split]
         elif train_val_test == 'validation':
-            self.feat_files = preprocessed_files[~mask_trainval_split]
+            self.feat_indices = np.arange(len(self.preprocessed_data))[~mask_trainval_split]
         else:
-            self.feat_files = preprocessed_files
-        
-        self.preprocessed_data_dir = preprocessed_data_dir
-        
+            self.feat_indices = np.arange(len(self.preprocessed_data))
         
         # Pre-compute the functionals
         if not os.path.exists(functionals_save_dir):
             os.makedirs(functionals_save_dir)
             precompute_functionals = True
         else:
+            if not os.path.exists(functionals_path):
+                precompute_functionals = True
             if precompute_functionals and len(os.listdir(functionals_save_dir)) != 0:
                 # Remove old files from the given directory
                 filenames_old_files = os.listdir(functionals_save_dir)
                 for filename in filenames_old_files:
                     os.remove(os.path.join(functionals_save_dir, filename))
-            
+        
         if precompute_functionals or len(os.listdir(functionals_save_dir)) == 0:
-            # We go through each file one at a time and compute its functionals
-            feats_functionals = []
-            for i in range(len(preprocessed_files)):
-                feat = np.load(os.path.join(preprocessed_data_dir, preprocessed_files[i])).squeeze()
+            # We go through each frame one at a time and we compute its functionals
+            feats_functionals = None
+            for i in range(len(self.preprocessed_data)):
+                feat = self.preprocessed_data[i].squeeze()
                 functionals = []
                 if functionals_include_mean:
                     functionals.append(np.mean(feat, axis=1))
@@ -509,49 +611,34 @@ class sleep_edf_expanded_dataset_pfml(Dataset):
                         functionals.append(scipy.stats.kurtosis(ac, axis=1))
                 functionals = np.stack(functionals, axis=1)
                 if normalize_functionals_sample_level:
-                    feats_functionals.append(normalize_sample(functionals))
-                else:
-                    feats_functionals.append(functionals)
+                    functionals = normalize_sample(functionals)
+                if feats_functionals is None:
+                    feats_functionals = np.lib.format.open_memmap(functionals_path, mode='w+', dtype=functionals.dtype, shape=(len(self.preprocessed_data), functionals.shape[0], functionals.shape[1]))
+                feats_functionals[i] = functionals
             
             if normalize_functionals_dataset_level:
                 feats_functionals = normalize_dataset(feats_functionals)
+            feats_functionals.flush()
+            del feats_functionals
             
-            # We save the functionals using .npy format
-            for i in range(len(preprocessed_files)):
-                savedata = feats_functionals[i]
-                name_parts = preprocessed_files[i].split('_')
-                savename = os.path.join(functionals_save_dir, f'{name_parts[0]}_{name_parts[1]}_{name_parts[2].split(".")[0]}_functionals.npy')
-                np.save(savename, savedata)
-        
-        # List all of our preprocessed functional files
-        preprocessed_functional_files = [filename for filename in os.listdir(functionals_save_dir) if filename.endswith('.npy')]
-        preprocessed_functional_files = np.array(sorted(preprocessed_functional_files))
-        
-        # Split our data into separate sets
-        if train_val_test == 'train':
-            self.functional_files = preprocessed_functional_files[mask_trainval_split]
-        elif train_val_test == 'validation':
-            self.functional_files = preprocessed_functional_files[~mask_trainval_split]
-        else:
-            self.functional_files = preprocessed_functional_files
+        self.preprocessed_functionals = np.load(functionals_path, mmap_mode='r')
+        self.functional_indices = self.feat_indices.copy()
         
         if data_sampling_rate < 1.00 and train_val_test != 'test':
             # We randomly select a subset of the data
-            num_sampled = int(data_sampling_rate * len(self.functional_files))
+            num_sampled = int(data_sampling_rate * len(self.feat_indices))
             np.random.seed(3*random_seed)
-            sampling_indices = np.random.choice(np.arange(len(self.functional_files)), num_sampled, replace=False)
-            self.feat_files = self.feat_files[sampling_indices]
-            self.functional_files = self.functional_files[sampling_indices]
-        
-        self.functionals_save_dir = functionals_save_dir
+            sampling_indices = np.random.choice(np.arange(len(self.feat_indices)), num_sampled, replace=False)
+            self.feat_indices = self.feat_indices[sampling_indices]
+            self.functional_indices = self.functional_indices[sampling_indices]
 
     def __len__(self) -> int:
-        return len(self.feat_files)
-
+        return len(self.feat_indices)
+    
     def __getitem__(self, index):
         
-        X = np.load(os.path.join(self.preprocessed_data_dir, self.feat_files[index]))
-        feats_functionals = np.load(os.path.join(self.functionals_save_dir, self.functional_files[index]))
+        X = np.array(self.preprocessed_data[self.feat_indices[index]], copy=True)
+        feats_functionals = np.array(self.preprocessed_functionals[self.functional_indices[index]], copy=True)
         data_mask = np.zeros((len(X)))
         
         return X, data_mask, feats_functionals
@@ -652,24 +739,16 @@ class sleep_edf_expanded_dataset_pfml_finetuning(Dataset):
     (https://github.com/emadeldeen24/AttnSleep).
     
     """
-
+    
     def __init__(self, test_subject_index_list, preprocessed_data_dir = './preprocessed_sleep_edf_exp_files_framed',
                  train_val_test = 'train', train_val_ratio = 0.8, random_seed = 42, mix_train_val_subjects = False,
                  data_sampling_rate=1.0):
         super().__init__()
         
-        # Find out our EDF files in the given directory
-        try:
-            filenames_eeg = os.listdir(preprocessed_data_dir)
-        except FileNotFoundError:
-            sys.exit(f'Given EEG file directory {preprocessed_data_dir} does not exist!')
-        
-        # Remove other files that EEG files
-        eeg_file_names = [filename for filename in filenames_eeg if filename.endswith('.npy')]
-        del filenames_eeg
-        
-        X = []
-        Y = []
+        # Load the framed sequences (using Numpy's memory mapping), labels, and subject IDs
+        self.X = np.load(os.path.join(preprocessed_data_dir, 'frames.npy'), mmap_mode='r')
+        self.Y = np.load(os.path.join(preprocessed_data_dir, 'labels.npy'))
+        subject_ids = np.load(os.path.join(preprocessed_data_dir, 'subject_ids.npy'))
         
         if not mix_train_val_subjects and train_val_test != 'test':
             # We split our training and validation data so that test subject-specific data is not included in both sets.
@@ -680,54 +759,41 @@ class sleep_edf_expanded_dataset_pfml_finetuning(Dataset):
             else:
                 test_subject_index_list = [test_subject_index_list[i] for i in train_val_test_subjects_permutation[num_train_test_subjects:]]
         
-        # We go through the data sequences one at a time and we append them to their appropriate lists.
-        for test_subject_index in test_subject_index_list:
-            test_subject_data = []
-            test_subject_labels = []
-            for i in range(len(eeg_file_names)):
-                if eeg_file_names[i][3:5] == test_subject_index:
-                    test_subject_data.append(np.load(os.path.join(preprocessed_data_dir, eeg_file_names[i])))
-                    test_subject_labels.append(float(eeg_file_names[i].split('.')[0].split('_')[-1]))
-            X += test_subject_data
-            Y += test_subject_labels
-            
+        # Find the data sequences belonging to the selected subjects
+        selected_data_indices = np.where(np.isin(subject_ids, np.array(test_subject_index_list, dtype=str)))[0]
+        
         if not mix_train_val_subjects or train_val_test == 'test':
-            self.X = np.array(X)
-            self.Y = np.array(Y)
+            self.indices = selected_data_indices
         else:
             np.random.seed(random_seed*5)
-            mask_trainval_split = np.random.rand(len(eeg_file_names)) <= train_val_ratio
+            mask_trainval_split = np.random.rand(len(selected_data_indices)) <= train_val_ratio
             if train_val_test == 'train':
-                self.X = np.array(X)[mask_trainval_split]
-                self.Y = np.array(Y)[mask_trainval_split]
+                self.indices = selected_data_indices[mask_trainval_split]
             else:
-                self.X = np.array(X)[~mask_trainval_split]
-                self.Y = np.array(Y)[~mask_trainval_split]
-
+                self.indices = selected_data_indices[~mask_trainval_split]
         
         if data_sampling_rate < 1.00 and train_val_test != 'test':
             # We randomly select a subset of the data
-            num_sampled = int(data_sampling_rate * len(X))
+            num_sampled = int(data_sampling_rate * len(self.indices))
             np.random.seed(3*random_seed)
-            sampling_indices = np.random.choice(np.arange(len(X)), num_sampled, replace=False)
-            self.X = self.X[sampling_indices, :, :, :]
-            self.Y = self.Y[sampling_indices]
-
+            sampling_indices = np.random.choice(np.arange(len(self.indices)), num_sampled, replace=False)
+            self.indices = self.indices[sampling_indices]
+    
     def __len__(self) -> int:
-        return len(self.X)
+        return len(self.indices)
 
     def __getitem__(self, index):
         
-        data_mask = np.zeros((len(self.X[index])))
+        data_index = self.indices[index]
+        X = np.array(self.X[data_index], copy=True)
+        data_mask = np.zeros((len(X)))
         
-        return self.X[index], self.Y[index], data_mask
+        return X, self.Y[data_index], data_mask
 
 
 
 
 
-# Normalize the 2D input sample to have zero mean and unit variance along each feature. The dimensions of
-# the input are (frame_index, feature_index).
 def normalize_sample(feats) -> np.ndarray:
     
     normalized = (feats - feats.mean(axis=0)) / feats.std(axis=0)
@@ -738,20 +804,41 @@ def normalize_sample(feats) -> np.ndarray:
     return normalized
 
 
-# Normalize the 3D input features (can be different-length) to have zero mean and unit variance
-# -> the input is a list with samples of dimensions (frame_index, feature_index).
-def normalize_dataset(feat_list):
-    
-    feats_unrolled = np.nan_to_num(np.concatenate(feat_list, axis=0))
-    feat_mean = feats_unrolled.mean(axis=0)
-    feat_std = feats_unrolled.std(axis=0)
-    del feats_unrolled
-    
-    for i in range(len(feat_list)):
-        feat_list[i] = (feat_list[i] - feat_mean) / feat_std
-        feat_list[i] = np.nan_to_num(feat_list[i]) # Remove NaN values by converting them to zero
-    
-    return feat_list
+# Normalize the feature array to have zero mean and unit variance along each feature. The dimensions
+# of feats are either (sample_index, frame_index, feature_index) or (frame_index, feature_index), the
+# latter of which is for variable-length samples stored consecutively.
+def normalize_dataset(feats, sample_offsets=None):
+
+    if sample_offsets is None:
+        feats_unrolled = feats.reshape(-1, feats.shape[-1])
+    else:
+        feats_unrolled = feats
+
+    # We compute the statistics one feature at a time so that the complete feature array
+    # does not have to be copied into RAM.
+    feat_mean = np.empty(feats_unrolled.shape[-1], dtype=feats_unrolled.dtype)
+    feat_std = np.empty(feats_unrolled.shape[-1], dtype=feats_unrolled.dtype)
+
+    for i in range(feats_unrolled.shape[-1]):
+        feat = np.nan_to_num(feats_unrolled[:, i])
+        feat_mean[i] = feat.mean()
+        feat_std[i] = feat.std()
+
+    if sample_offsets is None:
+        # Fixed-length data
+        for i in range(len(feats)):
+            feats[i] = (feats[i] - feat_mean) / feat_std
+            feats[i] = np.nan_to_num(feats[i])
+    else:
+        # Variable-length samples stored consecutively
+        for i in range(len(sample_offsets) - 1):
+            start = sample_offsets[i]
+            stop = sample_offsets[i + 1]
+            feats[start:stop] = (feats[start:stop] - feat_mean) / feat_std
+            feats[start:stop] = np.nan_to_num(feats[start:stop])
+
+    return feats
+
 
 
 
@@ -772,8 +859,8 @@ def estimated_autocorrelation(frames):
 
 def time_warping(data, p=1.0, winlen=120):
     basevec = np.arange(winlen) + 1.0
-    Nframes = int(np.floor(((data.shape[0] - winlen)/winlen) + 1))
-    for iFrame in range(Nframes):
+    num_frames = int(np.floor(((data.shape[0] - winlen)/winlen) + 1))
+    for iFrame in range(num_frames):
         # Randomly warp p*100% of frames
         if np.random.random_sample() <= p:
         # Random sinusoid with random phase, amplitude [0.5, 1.5], frequency
@@ -858,16 +945,57 @@ def channel_dropout(data, num_chans=1, tot_chans=4):
 
 
 
-def frame_sig(X, winlen, hop):
-    Nframes = int(np.floor(((X.shape[0] - winlen)/hop) + 1))
-    numchans = X.shape[1]
-    X_framed = np.zeros([Nframes, numchans, winlen], dtype=np.float32) # [Nframes, Nchans, winlen]
-    for i in range(0, Nframes):
-        start = i * hop
-        stop = start + winlen
-        X_framed[i,:,:] = np.transpose(X[start:stop,:])
+def frame_sig(X, winlen, hop, sequence_batch=False):
+    """
+    Frame either one multi-channel signal or a batch of sequences.
+    
+    If sequence_batch is False (default), X is interpreted as one signal with dimensions 
+    [sequence_length, num_channels] and the output is of shape [num_frames, num_channels, winlen].
+    
+    If sequence_batch is True, X is interpreted as a batch of sequences with dimensions
+    [num_sequences, sequence_length] or [num_sequences, num_channels, sequence_length]
+    and the output is of shape [num_sequences, num_frames, num_channels, winlen].
+
+    """
+
+    if sequence_batch:
+        if X.ndim == 2:
+            # Input shape = [num_sequences, sequence_length]
+            X = np.expand_dims(X, axis=1)
+
+        elif X.ndim != 3:
+            sys.exit('When sequence_batch=True, X must have shape [num_sequences, sequence_length] or [num_sequences, num_channels, sequence_length].')
+
+        num_sequences = X.shape[0]
+        num_channels = X.shape[1]
+        sequence_length = X.shape[2]
+
+        num_frames = int(np.floor(((sequence_length - winlen) / hop) + 1))
+        X_framed = np.zeros((num_sequences, num_frames, num_channels, winlen), dtype=np.float32)
+
+        for sequence_index in range(num_sequences):
+            for frame_index in range(num_frames):
+                start = frame_index * hop
+                stop = start + winlen
+                X_framed[sequence_index, frame_index, :, :] = X[sequence_index, :, start:stop]
+
+    else:
+        if X.ndim != 2:
+            sys.exit('When sequence_batch=False, X must have shape [sequence_length, num_channels].')
+
+        sequence_length = X.shape[0]
+        num_channels = X.shape[1]
+
+        num_frames = int(np.floor(((sequence_length - winlen) / hop) + 1))
+        X_framed = np.zeros((num_frames, num_channels, winlen), dtype=np.float32)
+
+        for frame_index in range(num_frames):
+            start = frame_index * hop
+            stop = start + winlen
+            X_framed[frame_index, :, :] = np.transpose(X[start:stop, :])
 
     return X_framed
+
 
 
 
@@ -901,34 +1029,5 @@ def data_augmentation(data, aug_p_noise, aug_p_dropout, aug_p_rotation, aug_p_ch
     data = frame_sig(data, window_len, hop_len)
 
     return data
-
-
-
-def frame_sig_eeg(X, winlen, hop):
-    """
-    The input data should be either of size [num_sequences, num_channels, sequence_length]
-    or of size [num_sequences, sequence_length]
-    
-    Output is of size [num_sequences, Nframes, num_channels, winlen]
-    """
-    
-    if len(X.shape) < 3:
-        # We add a dummy channel to the data
-        X = np.expand_dims(X, axis=1)
-    
-    Nframes = int(np.floor(((X.shape[2] - winlen)/hop) + 1))
-    num_channels = X.shape[1]
-    num_sequences = X.shape[0]
-    
-    X_framed = np.zeros([num_sequences, Nframes, num_channels, winlen], dtype=np.float32)
-    for i in range(num_sequences):
-        for j in range(0, Nframes):
-            start = j * hop
-            stop = start + winlen
-            X_framed[i,j,:,:] = X[i,:,start:stop]
-
-    return X_framed
-
-
 
 
